@@ -1,5 +1,37 @@
+const debug = true;
+// const sora = Sora.connection("wss://207-148-92-89.stable.sora.sora-labo.shiguredo.app/signaling", debug);
+const sora = Sora.connection("wss://sora.ikeilabsora.0am.jp/signaling", debug);
+// const channelId = "OJIMA-YUKIYA@sora-devtools";
+const channelId = "robots-control";
+// const metadata = {
+//     "signaling_key": "0mKFzDghLJNL7bmqa99hj4pp13IGaG_o4SHWdHoIKMzffpyZwQmo5dOIVi_9QBZ_",
+// };
+const options = {
+    multistream: true,
+    video: false,
+    audio: true,
+    dataChannelSignaling: true,
+    dataChannels: [
+        {
+            label: "#sora-devtools",
+            direction: "sendrecv"
+        }
+    ]
+};
+let recvonly = sora.recvonly(channelId, null, options);
+
+
 const remoteVideo = document.getElementById('remote_video');
-const dataTextInput = document.getElementById('data_text');
+// const T2_Input = document.getElementById('T2_text');
+// const accel_Input = document.getElementById('accel_text');
+// const max_velocity_Input = document.getElementById('max_velocity_text');
+// const reverse_Input = document.getElementsByName('q1');
+// const leftright_progress = document.getElementById('leftright');
+
+var ideal_velocity_logData = '';
+var real_velocity_logData = '';
+var log_latch = false;
+
 remoteVideo.controls = true;
 let peerConnection = null;
 let dataChannel = null;
@@ -125,10 +157,10 @@ function prepareNewConnection() {
       let tracks = [];
       peer.ontrack = (event) => {
         console.log('-- peer.ontrack()');
-        tracks.push(event.track)
+        // tracks.push(event.track)
         // safari で動作させるために、ontrack が発火するたびに MediaStream を作成する
-        let mediaStream = new MediaStream(tracks);
-        playVideo(remoteVideo, mediaStream);
+        // let mediaStream = new MediaStream(tracks);
+        // playVideo(remoteVideo, mediaStream);
       };
     }
     else {
@@ -171,9 +203,23 @@ function prepareNewConnection() {
   peer.addTransceiver('audio', {direction: 'recvonly'});
 
   dataChannel.onmessage = function (event) {
-    console.log("Got Data Channel Message:", new TextDecoder().decode(event.data));
+      if (event.data.byteLength == 20 && new Uint8Array(event.data)[0] == 0x45) {
+        recvonly.sendMessage('#sora-devtools', event.data);
+        let vel_time = (new Int32Array([new Uint8Array(event.data)[1] << 24])[0] + new Int32Array([new Uint8Array(event.data)[2] << 16])[0] + new Int32Array([new Uint8Array(event.data)[3] << 8])[0] + new Int32Array([ new Uint8Array(event.data)[4]])[0] )/1000.0;
+        let lin_vel = (new Int32Array([new Uint8Array(event.data)[5] << 24])[0] + new Int32Array([ new Uint8Array(event.data)[6] << 16 ])[0] + new Int32Array([new Uint8Array(event.data)[7] << 8])[0] + new Int32Array([ new Uint8Array(event.data)[8]])[0] )/10000.0;
+        let ang_vel = (new Int32Array([new Uint8Array(event.data)[9] << 24])[0] + new Int32Array([ new Uint8Array(event.data)[10] << 16 ])[0] + new Int32Array([new Uint8Array(event.data)[11] << 8])[0] + new Int32Array([ new Uint8Array(event.data)[12]])[0] )/10000.0;
+        let latch = new Uint8Array(event.data)[13];
+        let turn_position = (new Int16Array([new Uint8Array(event.data)[14] << 8])[0] + new Int16Array([ new Uint8Array(event.data)[15]])[0] )/100.0;
+        let position_x = (new Int16Array([new Uint8Array(event.data)[16] << 8])[0] + new Int16Array([ new Uint8Array(event.data)[17]])[0] )/100.0;
+        let position_z = (new Int16Array([new Uint8Array(event.data)[18] << 8])[0] + new Int16Array([ new Uint8Array(event.data)[19]])[0] )/100.0;
+
+        document.getElementById("sgss").innerHTML = 'latch ' + latch + '\nturn position(deg) ' + turn_position + '\nposition x(m) ' + position_x + '\nposition z(m) ' + position_z  + '\n時刻(s) ' + vel_time + '\n並進速度(m/s) ' + lin_vel + '\n旋回速度(deg/s)' + ang_vel;
+        if (log_latch) {
+          real_velocity_logData = real_velocity_logData + vel_time + ' ' + lin_vel + ' ' + ang_vel + '\n';
+        }
+      }
   };
-  
+
   return peer;
 }
 
@@ -210,34 +256,35 @@ function sendSdp(sessionDescription) {
 
 async function makeOffer() {
   peerConnection = prepareNewConnection();
+  console.log('hello!!!!!!!!!!!!');
   try {
     const sessionDescription = await peerConnection.createOffer({
-      'offerToReceiveAudio': true,
-      'offerToReceiveVideo': true
+      'offerToReceiveAudio': false,
+      'offerToReceiveVideo': false
     })
     console.log('createOffer() success in promise, SDP=', sessionDescription.sdp);
-    switch (document.getElementById('codec').value) {
-      case 'H264':
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP8');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP9');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'AV1');
-        break;
-      case 'VP8':
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'H264');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP9');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'AV1');
-        break;
-      case 'VP9':
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'H264');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP8');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'AV1');
-        break;
-      case 'AV1':
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'H264');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP8');
-        sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP9');
-        break;
-    }
+    // switch (document.getElementById('codec').value) {
+    //   case 'H264':
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP8');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP9');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'AV1');
+    //     break;
+    //   case 'VP8':
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'H264');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP9');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'AV1');
+    //     break;
+    //   case 'VP9':
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'H264');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP8');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'AV1');
+    //     break;
+    //   case 'AV1':
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'H264');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP8');
+    //     sessionDescription.sdp = removeCodec(sessionDescription.sdp, 'VP9');
+    //     break;
+    // }
     await peerConnection.setLocalDescription(sessionDescription);
     console.log('setLocalDescription() success in promise');
     sendSdp(peerConnection.localDescription);
@@ -374,18 +421,129 @@ function removeCodec(orgsdp, codec) {
   return internalFunc(orgsdp);
 }
 
-function play() {
-  remoteVideo.play();
+// function play() {
+//   remoteVideo.play();
+// }
+
+// function cal_velocity_plan() {
+//     let a = parseFloat(accel_Input.value);
+//     let vel_limit = parseFloat(max_velocity_Input.value);
+//     let T2 = parseFloat(T2_Input.value);
+//     let T1 = vel_limit / a;
+//     let T3 = vel_limit / a;
+//     let x =  (T2 + (T1 + T2 + T3)) * vel_limit / 2.0;
+//     document.getElementById("result_velocity_plan").innerHTML =
+//       "total_time: " + (T1 + T2 + T3).toFixed(6) + " (s)\n"
+//     + "         x: " + x.toFixed(6) + " (m)\n"
+//     + "        T1: " + T1.toFixed(6) + " (s)\n"
+//     + "        T2: " + T2.toFixed(6) + " (s)\n"
+//     + "        T3: " + T3.toFixed(6) + " (s)";
+// }
+
+// function sendDataChannel() {
+//     // console.log("hello");
+//     // if (accel_Input.value ==  || max_velocity_Input.value == NULL) {
+//     //     let target = document.getElementById("warning");
+//     //     target.innerHTML = "両方入力してください。";
+//     //     accel_Input.value = "";
+//     //     max_velocity_Input.value = "";
+//     //     return;
+//     // }
+//     // let target = document.getElementById("warning");
+//     // target.innerHTML = "";
+//     // let textData = "acce" + T2_Input.value + "," + accel_Input.value + "," + max_velocity_Input.value + ",";
+//     if (reverse_Input[0].checked) {
+//         textData = textData + 0;
+//     }
+//     else {
+//         textData = textData + 1;
+//     }
+//     // console.log("send: " + textData);
+//     if (textData.length == 0) {
+//         return;
+//     }
+//     if (dataChannel == null || dataChannel.readyState != "open") {
+//         // console.log("hello");
+//         return;
+//     }
+//     dataChannel.send(new TextEncoder().encode(textData));
+//     // accel_Input.value = "";
+//     // max_velocity_Input.value = "";
+// }
+
+// function quit_accel_cmd() {
+//     dataChannel.send(new TextEncoder().encode("quit"));
+// }
+
+function handleTargetVelDownload() {
+    ideal_velocity_logData = '#理想の速度の記録 [加速度: ' + accel_Input.value + ', 最高速度: ' + max_velocity_Input.value + ', T2: ' + T2_Input.value + ']\n#時刻(s),両輪(m/s)\n' + ideal_velocity_logData;
+    let blob = new Blob([ideal_velocity_logData], {"type": "text/plain"});
+
+    if (window.navigator.msSaveBlob) {
+        window.navigator.msSaveBlob(blob, "target_velocity.log");
+        window.navigator.msSaveOrOpenBlob(blob, "target_velocity.log");
+    } else {
+        document.getElementById("download1").href = window.URL.createObjectURL(blob);
+    }
 }
 
-function sendDataChannel() {
-  let textData = dataTextInput.value;
-  if (textData.length == 0) {
-    return;
-  }
-  if (dataChannel == null || dataChannel.readyState != "open") {
-    return;
-  }
-  dataChannel.send(new TextEncoder().encode(textData));
-  dataTextInput.value = "";
+function handleActualVelDownload() {
+    real_velocity_logData = '#計測した速度の記録\n#時刻(s),左右平均(m/s),左車輪(m/s),右車輪(m/s)\n' + real_velocity_logData;
+    let blob = new Blob([real_velocity_logData], {"type": "text/plain"});
+
+    if (window.navigator.msSaveBlob) {
+        window.navigator.msSaveBlob(blob, "actual_velocity.log");
+        window.navigator.msSaveOrOpenBlob(blob, "actual_velocity.log");
+    } else {
+        document.getElementById("download2").href = window.URL.createObjectURL(blob);
+    }
 }
+
+function startLog() {
+    ideal_velocity_logData = '';
+    real_velocity_logData = '';
+    let target1 = document.getElementById('logstartbutton');
+    if (target1.value == '記録中') {
+        return;
+    }
+    target1.value = '記録中';
+    let target2 = document.getElementById('logendbutton');
+    target2.value = '記録終了';
+    log_latch = true;
+}
+
+function endLog() {
+    log_latch = false;
+    let target1 = document.getElementById('logstartbutton');
+    target1.value = '記録開始';
+    let target2 = document.getElementById('logendbutton');
+    target2.value = '記録完了';
+}
+
+
+
+// joystick
+
+// window.addEventListener("gamepadconnected", function(e) {
+//     // gp = navigator.getGamepads()[e.gamepad.index];
+//     console.log("Gamepad connected at index %d: %s. %d buttons, %d axes.",
+//     e.gamepad.index, e.gamepad.id,
+//     e.gamepad.buttons.length, e.gamepad.axes.length);
+//     setInterval(gameLoop, 1000.0/50.0);
+//     gameLoop();
+// });
+// function gameLoop() {
+//     let gamepads = navigator.getGamepads ? navigator.getGamepads() : (navigator.webkitGetGamepads ? navigator.webkitGetGamepads : []);
+//     let gp = gamepads[0];
+//     if (gp != null) {
+//         let ang = -50*gp.axes[0];
+//         let lin = -0.8*gp.axes[3];
+//         document.getElementById('leftright').value = ang;
+//         document.getElementById('leftright_out').innerHTML = ang.toFixed(3);
+//         document.getElementById('frontrear').value = lin;
+//         document.getElementById('frontrear_out').innerHTML = lin.toFixed(3);
+//         if (dataChannel != null) {
+//             dataChannel.send(new TextEncoder().encode("jyja" + ang.toFixed(3) + "," + lin.toFixed(3) + "\n"));
+//         }
+//     }
+// }
